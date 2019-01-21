@@ -108,7 +108,6 @@ class View(object):
             nbit_qinput = 8 if x_op.op_type == 'Input' else 2
 
             if op.is_quantized and nbit_qinput == 2:
-                qconv_idx = 0  # temporary
                 qk_elems = w_op.data.shape[1]
 
                 kh = self.op.kernel_height
@@ -120,8 +119,11 @@ class View(object):
                     for k, v in input_ops['X'].output_ops.items():
                         if v[0] == op:
                             inputs_string = str(input_ops['X'].name) + '_' + str(k)
+                    istrt = inputs_string + ', ' + input_ops['W'].name + '_transposed'
                     inputs_string = inputs_string + ', ' + input_ops['W'].name
                 else:
+                    iops = input_ops
+                    istrt = ', '.join(str(x.name) if k != 'W' else str(x.name) + '_transposed' for k, x in iops.items())
                     inputs_string = self.inputs_to_string(input_ops)
 
                 if op.has_thresholds:
@@ -157,14 +159,17 @@ class View(object):
                     binConv2D_struct.bin_kernel_ndata = {qk_elems};
                     binConv2D_struct.bin_input_nwords = {qk_elems};
                     binConv2D_struct.bin_input_ndata = {qk_elems}*{nbit_qinput};
-                    binConv2D_struct.layer_index = {qconv_idx};
                     binConv2D_struct.device_input_buf = device_input_buf;
                     binConv2D_struct.device_output_buf = device_output_buf;
                     binConv2D_struct.thresholds = {threshold};
                     binConv2D_struct.n_bit = {nbit_aqtz};
                     binConv2D_struct.max_value = {max_value};
 
+                    #if defined RUN_ON_FPGA
+                    {conv_func}({istrt}, {op.name}, scaling_factors::{op.name}, binConv2D_struct);
+                    #else
                     {conv_func}({inputs_string}, {op.name}, scaling_factors::{op.name}, binConv2D_struct);
+                    #endif
                     """
                 )
 

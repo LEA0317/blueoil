@@ -18,6 +18,7 @@ limitations under the License.
 
 #include "global.h"
 #include "dma_buffer.h"
+#include <vector>
 
 #define SYM_PUBLIC __attribute__ ((visibility ("default")))
 #define SYM_LOCAL  __attribute__ ((visibility ("hidden")))
