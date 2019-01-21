@@ -20,7 +20,7 @@ limitations under the License.
 #include "matrix/row_major_to_col_major.h"
 #include "time_measurement.h"
 
-#if defined(USE_NEON) || defined(USE_ASIMD)
+#ifdef USE_NEON
   #include <arm_neon.h>
 #endif
 
@@ -32,24 +32,116 @@ inline void matrix_multiplication_col3(
   MatrixView<float, MatrixOrder::RowMajor>& A,
   MatrixView<float, MatrixOrder::ColMajor>& B,
   MatrixView<float, MatrixOrder::ColMajor>& C) {
-#if defined(USE_NEON) || defined(USE_ASIMD)
+#ifdef USE_NEON
   auto A_colm = row_major_to_col_major(A);
-  for (std::size_t i = 0; i < B.cols(); ++i) {
-    float32x4_t rhs0 = vdupq_n_f32((float)(*B.data(0, i)));
-    float32x4_t rhs1 = vdupq_n_f32((float)(*B.data(1, i)));
-    float32x4_t rhs2 = vdupq_n_f32((float)(*B.data(2, i)));
 
-    assert(A.rows() % 4 == 0);
-    for (std::size_t j = 0; j + 3 < A.rows(); j += 4) {
-      float32x4_t lhs0 = vld1q_f32(A_colm.data(j, 0));
-      float32x4_t lhs1 = vld1q_f32(A_colm.data(j, 1));
-      float32x4_t lhs2 = vld1q_f32(A_colm.data(j, 2));
+  const int Arows = A.rows();
+  if (Arows <= 8) {
+    for (std::size_t i = 0; i < B.cols(); i++) {
+      float32x4_t rhs0 = vdupq_n_f32((float)(*B.data(0, i)));
+      float32x4_t rhs1 = vdupq_n_f32((float)(*B.data(1, i)));
+      float32x4_t rhs2 = vdupq_n_f32((float)(*B.data(2, i)));
+      for (std::size_t j = 0; j + 3 < Arows; j += 4) {
+	float32x4_t lhs0 = vld1q_f32(A_colm.data(j, 0));
+	float32x4_t lhs1 = vld1q_f32(A_colm.data(j, 1));
+	float32x4_t lhs2 = vld1q_f32(A_colm.data(j, 2));
 
-      float32x4_t r;
-      r = vmulq_f32(lhs0, rhs0);
-      r = vmlaq_f32(r, lhs1, rhs1);
-      r = vmlaq_f32(r, lhs2, rhs2);
-      vst1q_f32(C.data(j, i), r);
+	float32x4_t r;
+	r = vmulq_f32(lhs0, rhs0);
+	r = vmlaq_f32(r, lhs1, rhs1);
+	r = vmlaq_f32(r, lhs2, rhs2);
+	vst1q_f32(C.data(j, i), r);
+      }
+    }
+  } else {
+    if (Arows % 8 == 0) {
+      for (std::size_t i = 0; i < B.cols(); ++i) {
+	const float32x4_t rhs0 = vdupq_n_f32((float)(*B.data(0, i)));
+	const float32x4_t rhs1 = vdupq_n_f32((float)(*B.data(1, i)));
+	const float32x4_t rhs2 = vdupq_n_f32((float)(*B.data(2, i)));
+
+	float32x4_t lhs0 = vld1q_f32(A_colm.data(0, 0));
+	float32x4_t lhs1 = vld1q_f32(A_colm.data(0, 1));
+	float32x4_t lhs2 = vld1q_f32(A_colm.data(0, 2));
+	float32x4_t r;
+	std::size_t j;
+	for (j = 0; j + 7 < Arows - 8; j += 8) {
+	  float32x4_t lhs20 = vld1q_f32(A_colm.data(j+4, 0));
+	  float32x4_t lhs21 = vld1q_f32(A_colm.data(j+4, 1));
+	  float32x4_t lhs22 = vld1q_f32(A_colm.data(j+4, 2));
+	  r = vmulq_f32(lhs0, rhs0);
+	  r = vmlaq_f32(r, lhs1, rhs1);
+	  r = vmlaq_f32(r, lhs2, rhs2);
+	  vst1q_f32(C.data(j, i), r);
+	  lhs0 = vld1q_f32(A_colm.data(j+8, 0));
+	  lhs1 = vld1q_f32(A_colm.data(j+8, 1));
+	  lhs2 = vld1q_f32(A_colm.data(j+8, 2));
+	  r = vmulq_f32(lhs20, rhs0);
+	  r = vmlaq_f32(r, lhs21, rhs1);
+	  r = vmlaq_f32(r, lhs22, rhs2);
+	  vst1q_f32(C.data(j+4, i), r);
+	}
+	float32x4_t lhs20 = vld1q_f32(A_colm.data(j+4, 0));
+	float32x4_t lhs21 = vld1q_f32(A_colm.data(j+4, 1));
+	float32x4_t lhs22 = vld1q_f32(A_colm.data(j+4, 2));
+	r = vmulq_f32(lhs0, rhs0);
+	r = vmlaq_f32(r, lhs1, rhs1);
+	r = vmlaq_f32(r, lhs2, rhs2);
+	vst1q_f32(C.data(Arows-8, i), r);
+	r = vmulq_f32(lhs20, rhs0);
+	r = vmlaq_f32(r, lhs21, rhs1);
+	r = vmlaq_f32(r, lhs22, rhs2);
+	vst1q_f32(C.data(Arows-4, i), r);
+      }
+    } else if (Arows % 8 == 4) {
+      for (std::size_t i = 0; i < B.cols(); ++i) {
+	const float32x4_t rhs0 = vdupq_n_f32((float)(*B.data(0, i)));
+	const float32x4_t rhs1 = vdupq_n_f32((float)(*B.data(1, i)));
+	const float32x4_t rhs2 = vdupq_n_f32((float)(*B.data(2, i)));
+
+	float32x4_t lhs0 = vld1q_f32(A_colm.data(0, 0));
+	float32x4_t lhs1 = vld1q_f32(A_colm.data(0, 1));
+	float32x4_t lhs2 = vld1q_f32(A_colm.data(0, 2));
+	float32x4_t r;
+	std::size_t j;
+	for (j = 0; j + 7 < Arows; j += 8) {
+	  float32x4_t lhs20 = vld1q_f32(A_colm.data(j+4, 0));
+	  float32x4_t lhs21 = vld1q_f32(A_colm.data(j+4, 1));
+	  float32x4_t lhs22 = vld1q_f32(A_colm.data(j+4, 2));
+	  r = vmulq_f32(lhs0, rhs0);
+	  r = vmlaq_f32(r, lhs1, rhs1);
+	  r = vmlaq_f32(r, lhs2, rhs2);
+	  vst1q_f32(C.data(j, i), r);
+	  lhs0 = vld1q_f32(A_colm.data(j+8, 0));
+	  lhs1 = vld1q_f32(A_colm.data(j+8, 1));
+	  lhs2 = vld1q_f32(A_colm.data(j+8, 2));
+	  r = vmulq_f32(lhs20, rhs0);
+	  r = vmlaq_f32(r, lhs21, rhs1);
+	  r = vmlaq_f32(r, lhs22, rhs2);
+	  vst1q_f32(C.data(j+4, i), r);
+	}
+	r = vmulq_f32(lhs0, rhs0);
+	r = vmlaq_f32(r, lhs1, rhs1);
+	r = vmlaq_f32(r, lhs2, rhs2);
+	vst1q_f32(C.data(Arows-4, i), r);
+      }
+    } else {
+      for (std::size_t i = 0; i < B.cols(); i++) {
+	float32x4_t rhs0 = vdupq_n_f32((float)(*B.data(0, i)));
+	float32x4_t rhs1 = vdupq_n_f32((float)(*B.data(1, i)));
+	float32x4_t rhs2 = vdupq_n_f32((float)(*B.data(2, i)));
+	for (std::size_t j = 0; j + 3 < Arows; j += 4) {
+	  float32x4_t lhs0 = vld1q_f32(A_colm.data(j, 0));
+	  float32x4_t lhs1 = vld1q_f32(A_colm.data(j, 1));
+	  float32x4_t lhs2 = vld1q_f32(A_colm.data(j, 2));
+
+	  float32x4_t r;
+	  r = vmulq_f32(lhs0, rhs0);
+	  r = vmlaq_f32(r, lhs1, rhs1);
+	  r = vmlaq_f32(r, lhs2, rhs2);
+	  vst1q_f32(C.data(j, i), r);
+	}
+      }
     }
   }
 #endif
@@ -67,7 +159,7 @@ void matrix_multiplication(
   assert(A.cols() == B.rows());
   Measurement::Start("matrix_multiplication");
 
-#if defined(USE_NEON) || defined(USE_ASIMD)
+#ifdef USE_NEON
   if (A.cols() == 3 && A.rows() % 4 == 0) {
       details::matrix_multiplication_col3(A, B, C);
     Measurement::Stop();
