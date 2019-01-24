@@ -38,8 +38,6 @@ void QuantizedConv2DKn2Row_3x3(QUANTIZED_NOT_PACKED input[],
   using namespace dlk;
 
   convolution_parameters cp = p.normal_conv_params;
-  static QUANTIZED_NOT_PACKED
-      im2col_input_buf[MAX_SIZE_IM2COL_INPUTS_PER_LAYER] = {};
   const T_UINT out_c = cp.output_channels;
 
 
@@ -166,8 +164,6 @@ void QuantizedConv2DKn2Row_1x1(QUANTIZED_NOT_PACKED input[],
   using namespace dlk;
 
   convolution_parameters cp = p.normal_conv_params;
-  static QUANTIZED_NOT_PACKED
-      im2col_input_buf[MAX_SIZE_IM2COL_INPUTS_PER_LAYER] = {};
   const T_UINT out_c = cp.output_channels;
 
 
@@ -223,20 +219,6 @@ void QuantizedConv2DKn2Row_1x1(QUANTIZED_NOT_PACKED input[],
     const T_UINT k_n_aligend_with_num_pe =
         ((k_n + (NUM_PE - 1)) / NUM_PE) * NUM_PE;
     const T_UINT out_c_aligend_with_num_pe = k_n_aligend_with_num_pe;
-    const T_UINT k_size = k_n_aligend_with_num_pe * k_h * k_w * k_c_by_word;
-
-    T_UINT kernel_hwnocni[k_size];
-    T_UINT kernel_filled_extra[k_size];
-
-    for (size_t k = 0; k < k_n * k_h * k_w * k_c_by_word; k++) {
-      kernel_filled_extra[k] = kernel[k];
-    }
-
-    Measurement::Start("Kernel transpose NHWC to HWNoCNi");
-    kernel_transform_NHWC_to_HWNoCNi(kernel_filled_extra, kernel_hwnocni,
-                                     k_n_aligend_with_num_pe, k_h, k_w,
-                                     k_c_by_word, NUM_PE);
-    Measurement::Stop();
 
     T_UINT input_byte_size =
         (cp.input_height * cp.input_width * cp.kernel_depth * in_nbits) /
@@ -255,7 +237,7 @@ void QuantizedConv2DKn2Row_1x1(QUANTIZED_NOT_PACKED input[],
 
     Measurement::Start("QConv2D with kn2row");
     de10_nano::qconv_with_kn2row(
-        p.device_input_phys_addr, p.device_output_phys_addr, kernel_hwnocni,
+        p.device_input_phys_addr, p.device_output_phys_addr, kernel,
         p.thresholds, in_w, in_h, in_c_by_word, MAX_NBIT_QINPUT, out_w, out_h,
         out_c_aligend_with_num_pe, k_w, k_h, 0,
         cp.stride_along_height);
@@ -279,14 +261,6 @@ void QuantizedConv2DKn2Row_1x1(QUANTIZED_NOT_PACKED input[],
 
   } else {
 
-    const T_UINT k_size = k_n * k_h * k_w * k_c_by_word;
-    T_UINT kernel_hwnocni[k_size];
-
-    Measurement::Start("Kernel transpose NHWC to HWNoCNi");
-    kernel_transform_NHWC_to_HWNoCNi(kernel, kernel_hwnocni, k_n, k_h, k_w,
-                                     k_c_by_word, NUM_PE);
-    Measurement::Stop();
-
     T_UINT input_byte_size =
         (cp.input_height * cp.input_width * cp.kernel_depth * in_nbits) /
         byte_nbits;
@@ -301,7 +275,7 @@ void QuantizedConv2DKn2Row_1x1(QUANTIZED_NOT_PACKED input[],
 
     Measurement::Start("QConv2D with kn2row");
     de10_nano::qconv_with_kn2row(
-        p.device_input_phys_addr, p.device_output_phys_addr, kernel_hwnocni,
+        p.device_input_phys_addr, p.device_output_phys_addr, kernel,
         p.thresholds, in_w, in_h, in_c_by_word, MAX_NBIT_QINPUT, out_w, out_h,
         out_c, k_w, k_h, 0, cp.stride_along_height);
     Measurement::Stop();
