@@ -135,23 +135,23 @@ void conv_general(
       {
         T_INT row = (wi * p.stride_along_height) - p.padding + ki;
         inside_row = (row >= 0 && row < (T_INT) p.input_height);
+	if (!inside_row) { current_kernel_index += p.kernel_width * p.kernel_depth; continue; }
 
         for(T_UINT kj = 0; kj < p.kernel_width; kj++)
         {
           T_INT col = (wj * p.stride_along_width)  - p.padding + kj;
           inside_col = (col >= 0 && col < (T_INT) p.input_width);
+	  if (!inside_col) { current_kernel_index += p.kernel_depth; continue; }
 
           for(T_UINT kz = 0; kz < p.kernel_depth; kz++)
           {
-            if (inside_row && inside_col) {
-              unsigned in_idx = row * (p.input_width * p.kernel_depth) + col * (p.kernel_depth) + kz;
-              unsigned k_idx = current_kernel_index + kernel_offset;
+	    unsigned in_idx = row * (p.input_width * p.kernel_depth) + col * (p.kernel_depth) + kz;
+	    unsigned k_idx = current_kernel_index + kernel_offset;
 
-              T in_data = input[in_idx];
-              T k_data = kernels[k_idx];
+	    T in_data = input[in_idx];
+	    T k_data = kernels[k_idx];
 
-              out += in_data * k_data;
-            }
+	    out += in_data * k_data;
             current_kernel_index++;
           }
         }
