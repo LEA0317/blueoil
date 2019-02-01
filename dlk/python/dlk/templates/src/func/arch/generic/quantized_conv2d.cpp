@@ -21,7 +21,7 @@ limitations under the License.
 #include <iterator>
 
 #include "global.h"
-#include "func/impl/apply_thresholds.h"
+#include "func/apply_thresholds.h"
 #include "func/impl/quantized_conv2d_dim2col.h"
 #include "func/impl/quantized_conv2d_tiling.h"
 #include "func/impl/quantized_conv2d_kn2row.h"
@@ -36,6 +36,7 @@ void func_linear_to_float(BIN_CONV_OUTPUT input[], T_INT nbit,
                           T_FLOAT max_value, T_FLOAT output[], T_UINT in_height,
                           T_UINT in_width, T_UINT in_depth,
                           T_UINT in_channel = 1) {
+  T_FLOAT min_value = 0;
   T_FLOAT n = (1 << nbit) - 1;
   unsigned num_elems = in_height * in_width * in_depth * in_channel;
 
@@ -62,17 +63,10 @@ void QuantizedConv2D(QUANTIZED_NOT_PACKED input[], T_UINT kernel[],
   else
     std::memset((void *)p.device_output_buf, 0, size * sizeof(BIN_CONV_OUTPUT));
 
-  if ((kh == 3 && kw == 3 && padding == 1) ||
-      (kh == 1 && kw == 1 && padding == 0)) {
-    if ((ic % TilingInTypeBitWidth) == 0) {
-#if defined(USE_NEON) && !defined(RUN_ON_FPGA)
-      dlk::impl::QuantizedConv2DTiling(input, kernel, p);
-#else
-      dlk::impl::QuantizedConv2DKn2Row(input, kernel, p);
-#endif
-    } else {
-      dlk::impl::QuantizedConv2DKn2Row(input, kernel, p);
-    }
+  if (kh == 3 && kw == 3 && padding == 1) {
+    dlk::impl::QuantizedConv2DKn2Row_3x3(input, kernel, p);
+  } else if (kh == 1 && kw == 1 && padding == 0) {
+    dlk::impl::QuantizedConv2DKn2Row_1x1(input, kernel, p);
   } else {
     dlk::impl::QuantizedConv2DIm2Col(input, kernel, p);
   }
@@ -96,7 +90,7 @@ void func_QuantizedConv2D(QUANTIZED_NOT_PACKED input[], T_UINT kernel[],
                        p.normal_conv_params.output_channels;
 
   // temporary: (2^n - 1) * (max - min)
-  const T_FLOAT post_qtz_factor = 2.0f / 3.0f;
+  T_FLOAT post_qtz_factor = 2.0 / 3.0;
 
   for (unsigned i = 0; i < out_elems; ++i) {
     output[i] = (scaling_factor * post_qtz_factor) * p.device_output_buf[i];
