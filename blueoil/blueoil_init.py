@@ -58,7 +58,7 @@ object_detection_network_definitions = [
 
 IMAGE_SIZE_VALIDATION = {
     "LmnetV1Quantize": {
-        "max_size": 512,
+        "max_size": 4096,
         "divider": 16,
     },
     "LMFYoloQuantize": {
