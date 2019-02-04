@@ -98,9 +98,6 @@ void QuantizedConv2DKn2Row_3x3(QUANTIZED_NOT_PACKED input[],
 			       const binary_convolution_parameters &p) {
   using namespace dlk;
 
-  convolution_parameters cp = p.normal_conv_params;
-  const T_UINT out_c = cp.output_channels;
-
   int ic = p.normal_conv_params.kernel_depth;
   int ih = p.normal_conv_params.input_height;
   int iw = p.normal_conv_params.input_width;
