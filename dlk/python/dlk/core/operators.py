@@ -995,6 +995,7 @@ class Conv(Operator):
         self._a_quantizer: List['Quantizer'] = []
         self._quantizer: Optional['Quantizer'] = None
         self._thresholds = thresholds
+        self._data = w.data
         super().__init__(name, shape, dtype, input_ops, dimension_format=dimension_format)
         # if kernel shape is not assigned, estimate kernel shape from input W's shape
 
