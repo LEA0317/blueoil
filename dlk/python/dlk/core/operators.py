@@ -734,6 +734,14 @@ class QTZ_binary_mean_scaling(Quantizer):
                      f'Shape mismatch at {self.op_type}" {self.name}"')
 
     @property
+    def data(self) -> np.ndarray:
+        return self._data
+        
+    @data.setter
+    def data(self, value: np.ndarray) -> None:
+        self._data = value
+
+    @property
     def is_monotonic(self) -> bool:
         return False
 

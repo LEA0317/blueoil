@@ -25,6 +25,32 @@ from typing import cast
 from collections import defaultdict
 from modules.packer import Packer
 
+def get_nodes_in_branch_2(starting_node, node_list):
+    node_list.append(starting_node)
+    for node in starting_node.input_nodes:
+        node_list.append(node)
+                                        
+
+def calc_bn_weight(gammas: np.ndarray,
+                   variances: np.ndarray,
+                   epsilon: float) -> np.ndarray:
+    size = gammas.size
+    weight_value = np.array([0.0] * size)
+    for i in range(size):
+        weight_value[i] = gammas[i] * (1.0 / np.sqrt(variances[i] + epsilon))
+    return weight_value
+
+def calc_bn_bias(gammas: np.ndarray,
+                 betas: np.ndarray,
+                 means: np.ndarray,
+                 variances: np.ndarray,
+                 epsilon: float) -> np.ndarray:
+    size = gammas.size
+    bn_bias_value = np.array([0.0] * size)
+    for i in range(size):
+        bn_bias_value[i] = betas[i] - gammas[i] * means[i] * (1.0 / np.sqrt(variances[i] + epsilon))
+    return bn_bias_value
+
 
 def pass_remove_identities(graph: Graph) -> None:
     """Removes those nodes of a Graph that satisfies the condition node.op_type() == Identity.
@@ -65,57 +91,59 @@ def pass_fuse_conv_and_bn(graph: Graph) -> None:
     conv_list = [n for n in sort_graph(graph) if n.op_type == 'Conv']
     bn_list = [n for n in sort_graph(graph) if n.op_type == 'BatchNormalization']
 
-    def calc_bn_weight(gammas: np.ndarray,
-                       variances: np.ndarray,
-                       epsilon: float) -> np.ndarray:
-        size = gammas.size
-        weight_value = np.array([0.0] * size)
-        for i in range(size):
-            weight_value[i] = gammas[i] * (1.0 / np.sqrt(variances[i] + epsilon))
-        return weight_value
-
-    def calc_bn_bias(gammas: np.ndarray,
-                     betas: np.ndarray,
-                     means: np.ndarray,
-                     variances: np.ndarray,
-                     epsilon: float) -> np.ndarray:
-        size = gammas.size
-        bn_bias_value = np.array([0.0] * size)
-        for i in range(size):
-            bn_bias_value[i] = betas[i] - gammas[i] * means[i] * (1.0 / np.sqrt(variances[i] + epsilon))
-        return bn_bias_value
-
+    to_be_removed = []
     for m_conv in conv_list:
         for m_bn in bn_list:
-            for output_name, consumer_list in m_conv.output_ops.items():
-                for consumer_node in consumer_list:
-                    if len(consumer_list) != 1:
-                        continue
-                    for input_name, producer_node in m_bn.input_ops.items():
-                        if producer_node.op_type == 'Conv' and consumer_node.op_type == 'BatchNormalization':
+            for input_name, producer_list in m_bn.input_ops.items():        
+                producer_node = producer_list
+
+                do_optimize = True
+                if producer_node != m_conv: # whether producer is tareget  conv
+                    do_optimize = False
+                for bn_output_name, bn_consumer_list in m_bn.output_ops.items():
+                    if len(bn_consumer_list) != 1: # bn consumer is one
+                        do_optimize = False
+                if do_optimize == False:
+                    break
+                
+                for input_name, consumer_list in m_conv.output_ops.items():        
+                    for consumer_node in consumer_list:
+                        if consumer_node == m_bn:
                             bn_epsilon = consumer_node.epsilon
                             bn_variance = consumer_node.input_ops['var'].data
                             bn_gamma = consumer_node.input_ops['scale'].data
-                            bn_beta = consumer_node.input_ops['B'].data                            
+                            bn_beta = consumer_node.input_ops['B'].data
                             bn_mean = consumer_node.input_ops['mean'].data
-
+                    
                             w_bn = calc_bn_weight(bn_gamma, bn_variance, bn_epsilon)
                             w_conv = producer_node.input_ops['W'].data
-
-                            w_conv_m = np.reshape(w_conv, [-1, w_conv.shape[-1]])
-                            w_conv_m2 = (np.array(w_bn) * w_conv_m).reshape(3,3,3,32).astype(np.float32)
-
+                        
+                            print(w_bn.shape)
+                            print(w_conv.shape)
+                            #w_conv_m = np.reshape(w_conv, [-1, w_conv.shape[-1]])
+                            #print(w_conv_m.shape)
+                            w_conv_m2 = (np.array(w_bn) * np.array([w_conv]).T) #_m).reshape(3,3,3,32).astype(np.float32)
                             producer_node.input_ops['W'].data = w_conv_m2
 
-                            if producer_node.input_ops['B'] is not None:
+                            if producer_node.input_ops.get('B'):
                                 b_conv = producer_node.input_ops['B'].data
                             else:
-                                b_conv = np.zeros(producer_node.input['W'].data.size)
+                                b_conv = np.zeros(producer_node.input_ops['W'].data.size)
+                            
                             b_bn = calc_bn_bias(bn_gamma, bn_beta, bn_mean, bn_variance, bn_epsilon)
+                            if producer_node.input_ops.get('B'):
+                                producer_node.input_ops['B'].data = b_bn + b_conv
+                                
+                            producer_node.remove_output('Y')
+                            producer_node.add_outputs({'Y': consumer_node.output_ops.values()})
 
-                            producer_node.input_ops['B'].data = b_conv + b_bn
+                            # get nodes to be removed after being disconnected
+                            get_nodes_in_branch_2(m_bn, to_be_removed)
 
-    return
+    for op in to_be_removed:
+        print("optimized")
+        graph.remove_op(op)
+
 
 def pass_transpose(graph: Graph) -> None:
     """Changes the data order of every node to be NHWC.
