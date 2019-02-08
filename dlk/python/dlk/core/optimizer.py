@@ -25,32 +25,6 @@ from typing import cast
 from collections import defaultdict
 from modules.packer import Packer
 
-def get_nodes_in_branch_2(starting_node, node_list):
-    node_list.append(starting_node)
-    for node in starting_node.input_nodes:
-        node_list.append(node)
-                                        
-
-def calc_bn_weight(gammas: np.ndarray,
-                   variances: np.ndarray,
-                   epsilon: float) -> np.ndarray:
-    size = gammas.size
-    weight_value = np.array([0.0] * size)
-    for i in range(size):
-        weight_value[i] = gammas[i] * (1.0 / np.sqrt(variances[i] + epsilon))
-    return weight_value
-
-def calc_bn_bias(gammas: np.ndarray,
-                 betas: np.ndarray,
-                 means: np.ndarray,
-                 variances: np.ndarray,
-                 epsilon: float) -> np.ndarray:
-    size = gammas.size
-    bn_bias_value = np.array([0.0] * size)
-    for i in range(size):
-        bn_bias_value[i] = betas[i] - gammas[i] * means[i] * (1.0 / np.sqrt(variances[i] + epsilon))
-    return bn_bias_value
-
 
 def pass_remove_identities(graph: Graph) -> None:
     """Removes those nodes of a Graph that satisfies the condition node.op_type() == Identity.
@@ -86,14 +60,17 @@ def pass_remove_identities(graph: Graph) -> None:
         graph.remove_op(op)
 
 
-#konda
 def pass_fuse_conv_and_bn(graph: Graph) -> None:
     conv_list = [n for n in sort_graph(graph) if n.op_type == 'Conv']
     bn_list = [n for n in sort_graph(graph) if n.op_type == 'BatchNormalization']
 
     to_be_removed = []
     for m_conv in conv_list:
+        if m_conv.input_ops['W'].data.dtype != np.float32:
+            continue
         for m_bn in bn_list:
+            if m_bn.input_ops['X'].data.dtype != np.float32:
+                continue
             for input_name, producer_list in m_bn.input_ops.items():        
                 producer_node = producer_list
 
@@ -109,36 +86,39 @@ def pass_fuse_conv_and_bn(graph: Graph) -> None:
                 for input_name, consumer_list in m_conv.output_ops.items():        
                     for consumer_node in consumer_list:
                         if consumer_node == m_bn:
+                            w_conv = producer_node.input_ops['W'].data
                             bn_epsilon = consumer_node.epsilon
                             bn_variance = consumer_node.input_ops['var'].data
                             bn_gamma = consumer_node.input_ops['scale'].data
                             bn_beta = consumer_node.input_ops['B'].data
                             bn_mean = consumer_node.input_ops['mean'].data
-                    
-                            w_bn = calc_bn_weight(bn_gamma, bn_variance, bn_epsilon)
-                            w_conv = producer_node.input_ops['W'].data
-                        
-                            print(w_bn.shape)
-                            print(w_conv.shape)
-                            #w_conv_m = np.reshape(w_conv, [-1, w_conv.shape[-1]])
-                            #print(w_conv_m.shape)
-                            w_conv_m2 = (np.array(w_bn) * np.array([w_conv]).T) #_m).reshape(3,3,3,32).astype(np.float32)
-                            producer_node.input_ops['W'].data = w_conv_m2
+                            var_sqrt = np.sqrt(bn_variance + bn_epsilon)
 
                             if producer_node.input_ops.get('B'):
-                                b_conv = producer_node.input_ops['B'].data
+                                b_conv = producer_node.input_ops['B']
                             else:
-                                b_conv = np.zeros(producer_node.input_ops['W'].data.size)
-                            
-                            b_bn = calc_bn_bias(bn_gamma, bn_beta, bn_mean, bn_variance, bn_epsilon)
-                            if producer_node.input_ops.get('B'):
-                                producer_node.input_ops['B'].data = b_bn + b_conv
-                                
+                                b_conv = np.zeros(bn_mean.shape)
+                            print (w_conv.shape)
+                            print ((w_conv * (bn_beta / var_sqrt)).shape)
+                            w_conv_new = w_conv * (bn_beta / var_sqrt).reshape([1, 1, 1, producer_node.channel])
+                            b_conv_new = (b_conv - bn_mean) / var_sqrt * bn_beta + bn_gamma
+
+                            producer_node.input_ops['B'] = b_conv_new
+                            producer_node.input_ops['W'] = w_conv_new
+
                             producer_node.remove_output('Y')
                             producer_node.add_outputs({'Y': consumer_node.output_ops.values()})
 
-                            # get nodes to be removed after being disconnected
-                            get_nodes_in_branch_2(m_bn, to_be_removed)
+                            output = consumer_node.output_ops['Y']
+                            if isinstance(output, list):
+                                if not output:
+                                    break
+                                elif output[0].op_type == "QTZ_linear_mid_tread_half":
+                                    output[0].add_input('X', producer_node)
+                            else:
+                                break;
+
+                            to_be_removed.append(consumer_node)
 
     for op in to_be_removed:
         print("optimized")
